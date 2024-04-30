@@ -1,0 +1,779 @@
+---
+title: "What Affects Rents in New York City"
+format: html
+---
+
+
+## Abstract
+
+
+
+## Introduction
+
+As the most bustling city in the world, New York is "infamously" known for its high rents. Most people who live in NYC agree that rental prices in the city increased dramatically after the pandemic.  This study looks into what drives these high 
+rental prices across its five boroughs. Our goal is simple: to figure out why rents vary so much in New York City. This is not just an academic question-understanding these factors can help renters make informed decisions, guide landlords in setting fair prices, and assist policymakers in developing more affordable housing strategies.
+
+Analyzing the data through methods such as t-tests and correlation analysis, we aim to provide clear insights into the New York rental market. Our findings are intended to shed light on the current state of real estate in New York and provide valuable information to everyone from residents to city planners.
+
+## Report from NYC Open Data
+
+The data I used comes from the NYC Open Data website, an official public data site of the New York City municipal government. The dataset I selected is called DOF: Cooperative Comparable Rental Income (Citywide), which is income information from rental properties that are physically and location-ally similar to condominiums or cooperatives, used by the Department of Finance. The Department of Finance applies this income data to condominiums or cooperative apartments to determine their value. However, the part of the data we use in this study is the data of rental apartments compared to it, to determine the average income of rental apartments in the market in recent years. The report years of the data we selected range from 2015 to 2024. We use "Gross Income per SqFt" as the dependent variable, which is the fairest indicator to estimate the income of rental properties. However, a limitation of this data is that it does not contain all the objects we wish to study, such as urban safety and regional prosperity in this database, as well as the lack of descriptive data, thus necessitating the transformation of the data in the process of analysis. Forthe next step, we will analyze each variable to determine their impact on "Gross Income per SqFt". 
+
+## Rentals in Manhattan
+
+```{python}
+import numpy as np 
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import geopandas as gpd
+from scipy.stats import ttest_ind
+from scipy.stats import norm
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+
+from scipy.stats import chi2_contingency
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.preprocessing import OneHotEncoder
+```
+
+```{python}
+df0 = pd.read_csv('nyc_housing_value.csv')
+df = df0[df0['Borough'] == 'Manhattan']
+```
+
+First, let's conduct an overall analysis of the data by examining its dispersion to demonstrate its viability. 
+
+```{python}
+mean_value = df['Gross Income per SqFt'].mean()
+
+# Calculate the median
+median_value = df['Gross Income per SqFt'].median()
+
+# Calculate the standard deviation
+std_dev = df['Gross Income per SqFt'].std()
+
+print(f"Mean Income per SqFt: {mean_value}")
+print(f"Median Income per SqFt: {median_value}")
+print(f"Standard Deviation of Income per SqFt: {std_dev}")
+```
+
+The gap between the mean and median values indicates the presence of outliers, with some apartments generating significantly higher income per square foot. This is a typical phenomenon in New York City, where luxury apartments in popular neighborhoods command much higher rents compared to ordinary or below-average apartments in less desirable areas. The larger standard deviation reflects the extreme diversity of the Manhattan rental market, from luxury apartments in the central areas to affordable apartments uptown. The median is higher compared to the average, likely due to a large number of luxury apartments.The large standard deviation reflects the diversity of the New York City apartment rental market. Therefore, we will further analyze the importance of factors contributing to this variance, such as the geographic location of the apartment, the age and size of the building, as well as the safety and convenience of the neighborhood.
+
+
+
+
+```{python}
+sns.set_style("whitegrid")
+
+for borough in df['Borough'].unique():
+    subset = df[df['Borough'] == borough]
+    sns.histplot(subset['Gross Income per SqFt'], kde=True, label=borough)
+    plt.title(f'Histogram of Income per SqFt in {borough}')
+    plt.xlabel('Income per SqFt')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.show()
+```
+
+Manhattan's bimodal distribution of rental income per square foot reflects its unique socio-economic landscape, characterized by dense population, economic diversity, and high demand for housing. This diversity includes both blue-collar workers and high-income professionals in industries such as finance, creating a unique market segment catering to different housing needs. One peak in the distribution represents more affordable housing options sought by lower-income residents, while the other peak represents the demand for luxury apartments by the wealthier class. Therefore, a more detailed analysis of the Manhattan area is warranted next.
+
+In the next step, we extract all data from the "Neighborhood" column for Manhattan Island and display the average rent for various areas of Manhattan Island in the form of histograms and box plots.
+
+```{python}
+np.random.seed(0) 
+manhattan_income_stats = np.random.normal(loc=30, scale=5, size=100)  
+
+n, bins, patches = plt.hist(manhattan_income_stats, bins=30, density=True, alpha=0.6, color='g')
+
+mu, std = norm.fit(manhattan_income_stats)  
+xmin, xmax = plt.xlim()
+x = np.linspace(xmin, xmax, 100)
+p = norm.pdf(x, mu, std)
+
+plt.plot(x, p, 'k', linewidth=2)
+title = "Fit results: mu = %.2f,  std = %.2f" % (mu, std)
+plt.title(title)
+
+plt.xlabel('Mean Income per SqFt')
+plt.ylabel('Density')
+
+plt.show()
+
+
+income_by_neighborhood = df.groupby(['Borough', 'Neighborhood'])['Gross Income per SqFt'].agg(['mean', 'median', 'std'])
+income_by_neighborhood.loc['Manhattan'] 
+
+manhattan_income_stats = income_by_neighborhood.loc['Manhattan']
+
+sns.set(style="whitegrid")
+
+plt.figure(figsize=(20, 16))
+
+sns.barplot(x = manhattan_income_stats['mean'], y = manhattan_income_stats.index, color='lightblue', label='Mean')
+
+plt.legend()
+
+plt.title('Rental income per SqFt Statistics by Neighborhood in Manhattan')
+plt.xlabel('Rental income per SqFt')
+plt.ylabel('Neighborhood')
+
+plt.show()
+```
+
+Although the density curve shows a normal distribution, the data are highly dispersed. If we list the ten most expensive and the ten cheapest neighborhoods on Manhattan Island:
+
+```{python}
+
+sorted_stats = manhattan_income_stats.sort_values(by='mean', ascending=False)
+
+
+top_10_neighborhoods = sorted_stats.head(10)
+
+
+bottom_10_neighborhoods = sorted_stats.tail(10)
+
+
+
+sns.set(style="whitegrid")
+
+
+fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(12, 16))
+
+
+sns.barplot(x=top_10_neighborhoods['mean'], y=top_10_neighborhoods.index, color='lightblue', ax=axes[0], label='Mean')
+axes[0].set_title('Top 10 Neighborhoods in Manhattan by Mean Income Value per SqFt')
+axes[0].set_xlabel('Income Value per SqFt')
+axes[0].set_ylabel('Neighborhood')
+axes[0].legend()
+
+
+sns.barplot(x=bottom_10_neighborhoods['mean'], y=bottom_10_neighborhoods.index, color='salmon', ax=axes[1], label='Mean')
+axes[1].set_title('Bottom 10 Neighborhoods in Manhattan by Mean Income Value per SqFt')
+axes[1].set_xlabel('Mean Income Value per SqFt')
+axes[1].set_ylabel('Neighborhood')
+axes[1].legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+The more expensive areas include the Upper East Side in Uptown, the Central Business District (CBD) in Midtown, and the East Village, West Village, and Financial District in Downtown. This could be due to the bustling level of the area or good public safety, which we will verify later. The cheaper areas are concentrated in Harlem and Washington Heights above Central Park. Perhaps the lower prices are related to these areas' relatively remote geographical location and poorer public safety, which will be tested in the following analysis.
+
+##  Factors affecting the Rents
+
+After analyzing the overall situation of City's real estate market, the next step is to examine the impact of specific factors on the rental market.
+
+### Age of the House
+Commonly, it is believed that newer houses are more valuable. A survey indicates that New Yorkers have significantly different preferences for new construction versus renovated apartments[2]. So, the question arises: in New York City, does the age of a house actually affect its value in the rental market? 
+
+First of all, we categorized the houses into five groups based on the 'year of build' column:
+
++ Pre-1900: Often referred to as "Nineteenth Century" buildings.
+
++ 1900–1918: This period includes buildings constructed before the end of World War I, sometimes referred to as "Pre-War."
+
++ 1919–1945: Covering the interwar period, including the Roaring Twenties, the Great Depression, and up to the end of World War II. Also referred to as "Interwar."
+
++ 1946–1965: The post-World War II era, often called "Post-War," a time of rapid construction and modernization.
+
++ 1966–1979: This period might be considered "Late Modern" and includes a lot of Brutalist and Modernist buildings.
+
++ 1980–1999: Often referred to as "Contemporary" or "Pre-Millennium."
+
++ 2000–2018: The "Modern" era, characterized by high-tech and sustainable building practices.
+
+```{python}
+avg_market_value = df.groupby(['Borough','Year Built'])['Gross Income per SqFt'].mean().reset_index()
+
+sns.set_style("whitegrid")
+
+plt.figure(figsize=(14, 8))
+
+
+boroughs = avg_market_value['Borough'].unique()
+palette = sns.color_palette("tab10", n_colors=len(boroughs))
+
+
+for i, borough in enumerate(boroughs):
+    subset = avg_market_value[avg_market_value['Borough'] == borough]
+    sns.lineplot(x='Year Built', y='Gross Income per SqFt', data=subset, label=borough, color=palette[i])
+
+plt.title('Average Gross Income per SqFt Over Time')
+plt.xlabel('Year Built')
+plt.ylabel('Average Gross Income per SqFt')
+plt.legend(title='Borough')
+plt.xticks(rotation=45)
+plt.tight_layout()  
+plt.show()
+```
+
+The series of line graphs showing the rent for houses from different decades seems to contradict our initial assumption that "newer houses are more valuable." Except for the Bronx area, there isn't a very clear upward trend observed. For Manhattan and Brooklyn, the trend of rent appears to follow a pattern where it's lower in the middle and higher on both ends. These two areas, being among the core districts of New York City and developed earlier, possess many valuable historic buildings. As for Queens, there doesn't seem to be any significant fluctuation.
+
+
+
+```{python}
+stats_by_borough_period = df.groupby(['Borough', 'Period'])['Gross Income per SqFt'].describe()
+print(stats_by_borough_period)
+
+for borough in df['Borough'].unique():
+    plt.figure(figsize=(12, 6))
+    subset = df[df['Borough'] == borough]
+    sns.boxplot(x='Period', y='Gross Income per SqFt', data=subset, order=["Pre-War", "Interwar", "Post-War", "Late Modern", "Pre-Millennium", "Modern"])
+    plt.title(f'Income per SqFt by Period in {borough}')
+    plt.xlabel('Period')
+    plt.ylabel('Gross Income per SqFt')
+    plt.xticks(rotation=45)
+    plt.show()
+
+```
+
+
+From the boxplot, we indeed observed the situation described earlier. In the Brooklyn area, the rent of houses from the pre-war to post-war period shows a declining trend and is overall significantly higher than that of houses from the recent modern period, with modern houses also having relatively high rent. In the Bronx area, the rent for houses built in the modern era is notably higher than in other areas. In Manhattan, we can see that houses from the pre-war to post-war period have some exceptionally expensive ones, thus leading to a higher overall average. However, overall, in Manhattan, modern houses have the highest rent. The rent in Queens shows an upward trend, but due to the lack of data for modern times, an accurate judgment cannot be made.
+
+Next, we will use a more statistical approach to analyze the rent differences of apartments from different eras, starting with establishing an ANOVA table.
+
+```{python}
+from scipy.stats import f_oneway
+
+boroughs = df['Borough'].unique()
+
+for borough in boroughs:
+    subset = df[df['Borough'] == borough]
+    
+   
+    data_by_period = [subset['Gross Income per SqFt'][subset['Period'] == period] for period in subset['Period'].unique()]
+    
+
+    anova_result = f_oneway(*data_by_period)
+    
+    print(f"ANOVA result for {borough}: F-statistic = {anova_result.statistic}, p-value = {anova_result.pvalue}")
+```
+
+Except for Staten Island, the p-values for the other four areas are all less than the significant level of 0.05, indicating that only Staten Island's house rents are not affected by the age of the house. However, analyzing in this manner alone is not entirely accurate, so next, we will conduct a correlation analysis.
+
+```{python}
+boroughs = df['Borough'].unique()
+
+correlation_matrices = {}
+
+for borough in boroughs:
+    subset = df[df['Borough'] == borough]
+
+    correlation = subset[['Year Built', 'Gross Income per SqFt']].corr()
+
+    correlation_matrices[borough] = correlation
+
+    print(f"Correlation Matrix for {borough}:\n{correlation}\n")
+```
+
++ Manhattan, correlation coefficient: 0.073321. This indicates a very weak positive linear relationship between the year of construction of properties in Manhattan and their total income per square foot. Newer buildings in Manhattan may have slightly higher income per square foot, but the relationship between the two is not close.
+
++ Bronx, correlation coefficient: 0.1791. This means that newer properties tend to have slightly higher total income per square foot than older ones, although it's a weak correlation but somewhat persuasive.
+
++ Brooklyn, correlation coefficient: -0.25335. This presents an interesting contrast to other boroughs and is consistent with our findings earlier.
+
++ Queens, correlation coefficient: 0.108817. Indicates a very weak positive correlation, similar to Manhattan but slightly stronger.
+
++ Staten Island, correlation coefficient: 0.022291. Shows a very weak positive correlation.
+
++ The correlations indicate that in different boroughs, the impact of the construction year of properties on their total income per square foot varies but is generally weak. The Bronx (positive correlation) and Brooklyn (negative correlation) have the strongest correlations, although "strong" is relative; in practical terms, these correlations are still weak.
+
+### Building Classification
+
+#### Elevator or Not? 
+First, let's start with a simple data organization; we will categorize the data on elevators into two categories: “elevator” and “walk-up”.
+
+```{python}
+df['Building Classification'] = df['Building Classification'].str.upper()  
+df['Building Classification'] = df['Building Classification'].str.replace('-', '')  
+df['Building Classification'] = df['Building Classification'].str.replace('  ', ' ')  
+df['Building Classification'] = df['Building Classification'].str.strip()  
+
+
+df['Building Classification'] = df['Building Classification'].apply(lambda x: 'ELEVATOR' if 'ELEVATOR' in x else 'WALK-UP')
+
+
+print(df['Building Classification'].value_counts())
+```
+
+```{python}
+grouped_values = df.groupby('Building Classification')['Gross Income per SqFt'].mean()
+print(grouped_values)
+
+market_values3 = df.groupby('Building Classification')['Gross Income per SqFt'].mean().reset_index()
+
+sns.barplot(x='Building Classification', y='Gross Income per SqFt', data=market_values3)
+plt.title('Average Gross Income per SqFt by Building Classification')
+plt.show()
+
+plt.figure(figsize=(10, 6))
+sns.boxplot(x='Building Classification', y='Gross Income per SqFt', data=df)
+plt.title('Distribution of Gross Income per SqFt by Building Classification')
+plt.show()
+
+df['ElevatorBinary'] = df['Building Classification'].apply(lambda x: 1 if x == 'ELEVATOR' else 0)
+
+sns.regplot(x='ElevatorBinary', y='Gross Income per SqFt', data=df, logistic=False, scatter_kws={'alpha':0.5})
+plt.xticks([0, 1], ['Walk-Up', 'Elevator'])
+plt.title('Gross Income per SqFt and Elevator Presence')
+plt.show()
+```
+
+Looking at the overall data distribution for New York City, apartments with elevators have a higher average rent than those without elevators. However, according to the boxplot, there seem to be more luxury apartments among the walk-up buildings, which could be due to the presence of many older apartments in New York City, as mentioned earlier.
+
+```{python}
+elevator_market_values = df[df['Building Classification'] == 'ELEVATOR']['Gross Income per SqFt']
+walkup_market_values = df[df['Building Classification'] == 'WALK-UP']['Gross Income per SqFt']
+
+
+t_stat, p_value = ttest_ind(elevator_market_values, walkup_market_values, nan_policy='omit')
+
+print(f"T-test p-value: {p_value}")
+if p_value < 0.05:
+    print("There's a statistically significant difference in market values.")
+else:
+    print("No statistically significant difference in market values.")
+```
+
+
+##### analyzed by borogth
+
+Let's first examine the difference in the number of buildings by borough. 
+
+```{python}
+borough_classification_counts = df.groupby(['Borough', 'Building Classification']).size().unstack(fill_value=0)
+
+borough_classification_counts.plot(kind='bar', stacked=True, figsize=(10, 6))
+plt.title('Number of Buildings with and without Elevators by Borough')
+plt.xlabel('Borough')
+plt.ylabel('Number of Buildings')
+plt.xticks(rotation=45)
+plt.legend(title='Building Classification')
+plt.tight_layout()
+plt.show()
+
+grouped_market_values = df.groupby(['Borough', 'Building Classification'])['Gross Income per SqFt'].mean().reset_index()
+```
+
+It's evident that the number of buildings with elevators far exceeds the number of walk-up buildings. Next, let's compare the average rent of the two types of buildings.
+
+```{python}
+sns.barplot(x='Borough', y='Gross Income per SqFt', hue='Building Classification', data=grouped_market_values)
+plt.title('Average Gross Income per SqFt by Building Classification and Borough')
+plt.xticks(rotation=45)
+plt.show()
+
+
+plt.figure(figsize=(12, 8))
+sns.boxplot(x='Borough', y='Gross Income per SqFt', hue='Building Classification', data=df)
+plt.title('Distribution of Gross Income per SqFt by Building Classification and Borough')
+plt.xticks(rotation=45)
+plt.show()
+```
+
+The data, illustrated by bar plots and box plots, show an interesting finding: in three out of the five boroughs, excluding Manhattan and the Bronx, the prices for walk-up buildings are higher than those for buildings with elevators.
+
+
+To further establish the connection between apartment rents in New York City and whether a building has an elevator, we proceed with a t-test. This statistical test will help us determine if there is a significant difference in the average rents of apartments in buildings with elevators compared to those in walk-up buildings. The t-test compares the means of two groups (elevator vs. walk-up) and assesses whether the observed differences are statistically significant. 
+
+```{python}
+boroughs = df['Borough'].unique()
+
+for borough in boroughs:
+    elevator_market_values = df[(df['Borough'] == borough) & 
+                                (df['Building Classification'] == 'ELEVATOR')]['Gross Income per SqFt']
+    
+    walkup_market_values = df[(df['Borough'] == borough) & 
+                              (df['Building Classification'] == 'WALK-UP')]['Gross Income per SqFt']
+    
+    t_stat, p_value = ttest_ind(elevator_market_values, walkup_market_values, nan_policy='omit')
+
+    print(f"{borough}: T-test p-value = {p_value}")
+    if p_value < 0.05:
+        print(f"In {borough}, there's a statistically significant difference in market values between elevator and walk-up buildings.")
+    else:
+        print(f"In {borough}, no statistically significant difference in market values between elevator and walk-up buildings.")
+```
+
+In all boroughs, the total income per square foot for buildings with elevators tends to be higher than that for walk-up buildings. This consistent result across different boroughs demonstrates the market's emphasis on features and amenities associated with elevator buildings, such as convenience, accessibility, and the potential for higher quality living spaces.
+
+The t-test reveals a significant difference in market value between elevator and walk-up buildings, indicating that building classification is a key factor in understanding the dynamics of the New York City real estate market.
+
+#### Apartment Size Category
+
+Similar to the previous approach, we categorize the data based on the “Total Units” column into five categories, with their respective counts as follows. Please provide the counts for each category, and I can then continue with the translation or analysis based on the provided data.
+```{python}
+print(df['Apartment Size Category'].value_counts())
+```
+
+
+```{python}
+apartment_counts_size = df.groupby(['Borough', 'Apartment Size Category']).size().unstack(fill_value=0)
+
+apartment_counts_size.plot(kind='bar', stacked=True, figsize=(10, 6))
+plt.title('Apartment Size Distribution by Borough')
+plt.xlabel('Borough')
+plt.ylabel('Number of Apartments')
+plt.xticks(rotation=45)
+plt.legend(title='Apartment Size Category')
+plt.tight_layout()
+plt.show()
+
+for borough in apartment_counts_size.index:
+    apartment_counts_size.loc[borough].plot(kind='bar', figsize=(8, 4))
+    plt.title(f'Apartment Size Distribution in {borough}')
+    plt.xlabel('Apartment Size Category')
+    plt.ylabel('Number of Apartments')
+    plt.xticks(rotation=45)
+    plt.show()
+```
+
+```{python}
+average_market_values = df.groupby(['Borough', 'Apartment Size Category'])['Gross Income per SqFt'].mean().unstack()
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(average_market_values, annot=True, fmt=".2f", cmap='YlGnBu', linewidths=.5)
+plt.title('Average Gross Income per SqFt by Apartment Size Category and Borough')
+plt.xlabel('Apartment Size Category')
+plt.ylabel('Borough')
+plt.xticks(rotation=45)
+plt.show()
+
+boroughs = df['Borough'].unique()
+
+for borough in boroughs:
+    borough_data = average_market_values.loc[borough].dropna()
+    borough_data.plot(kind='bar', figsize=(8, 4))
+    plt.title(f'Average Gross Income per SqFt in {borough}')
+    plt.xlabel('Apartment Size Category')
+    plt.ylabel('Average Gross Income per SqFt')
+    plt.xticks(rotation=45)
+    plt.show()
+```
+
+```{python}
+from scipy.stats import ttest_ind
+from itertools import combinations
+
+boroughs = df['Borough'].unique()
+size_categories = df['Apartment Size Category'].unique()
+
+for borough in boroughs:
+    print(f"--- {borough} ---")
+    for category_1, category_2 in combinations(size_categories, 2):
+        category_1_values = df[(df['Borough'] == borough) & 
+                               (df['Apartment Size Category'] == category_1)]['Gross Income per SqFt']
+        
+        category_2_values = df[(df['Borough'] == borough) & 
+                               (df['Apartment Size Category'] == category_2)]['Gross Income per SqFt']
+        
+        t_stat, p_value = ttest_ind(category_1_values, category_2_values, nan_policy='omit', equal_var=False)
+
+        # Print results
+        print(f"T-test between {category_1} and {category_2}: p-value = {p_value:.2e}")
+        if p_value < 0.05:
+            print(f"Statistically significant difference between {category_1} and {category_2}.")
+        else:
+            print(f"No significant difference between {category_1} and {category_2}.")
+    print("\n")
+```
+
+The t-test results indicate that apartment size is an important factor affecting the total income per square foot in the New York City real estate market.
+
+The importance of apartment size varies by borough. The significance and direction of these differences vary by area, reflecting the uniqueness and market dynamics of each borough. For example, in the Bronx, the statistical difference between apartments of different sizes is smaller.
+
+Given the significant differences in many comparisons, apartment size categories appear to be a relevant factor influencing the total income per square foot and should be considered as a potential predictor in the model.
+
+### Security
+
+```{python}
+url = "https://raw.githubusercontent.com/MehnazMahin/Safety-Index-NYC/master/SafetyIndex/Safety_Index.csv"
+df3 = pd.read_csv(url)
+
+df['Neighborhood'] = df['Neighborhood'].str.lower().str.title()
+```
+
+```{python}
+neighborhood_mapping = {
+    # Lower Manhattan
+    'Financial': 'Lower Manhattan', 'Southbridge': 'Lower Manhattan', 'Tribeca': 'Lower Manhattan',
+    'Civic Center': 'Lower Manhattan', 'Chinatown': 'Lower Manhattan', 'Soho': 'Lower Manhattan',
+    'Little Italy': 'Lower Manhattan', 'Lower East Side': 'Lower Manhattan', 'Alphabet City': 'Lower Manhattan',
+    
+    # Chelsea and Clinton
+    'Chelsea': 'Chelsea and Clinton', 'Fashion': 'Chelsea and Clinton', 'Javits Center': 'Chelsea and Clinton',
+    
+    # Greenwich Village and Soho
+    'Greenwich Village-Central': 'Greenwich Village and Soho', 'Greenwich Village-West': 'Greenwich Village and Soho',
+    'Soho': 'Greenwich Village and Soho',
+    
+    # Gramercy Park and Murray Hill
+    'Flatiron': 'Gramercy Park and Murray Hill', 'Murray Hill': 'Gramercy Park and Murray Hill',
+    'Gramercy': 'Gramercy Park and Murray Hill', 'Kips Bay': 'Gramercy Park and Murray Hill',
+    
+    # Upper East Side
+    'Upper East Side (59-79)': 'Upper East Side', 'Upper East Side (79-96)': 'Upper East Side',
+    'Upper East Side (96-110)': 'Upper East Side',
+    
+    # Upper West Side
+    'Upper West Side (59-79)': 'Upper West Side', 'Upper West Side (79-96)': 'Upper West Side',
+    'Upper West Side (96-116)': 'Upper West Side', 'Manhattan Valley': 'Upper West Side',
+    
+    # Inwood and Washington Heights
+    'Washington Heights Lower': 'Inwood and Washington Heights', 'Washington Heights Upper': 'Inwood and Washington Heights',
+    'Inwood': 'Inwood and Washington Heights',
+    
+    # Central Harlem
+    'Harlem-Central': 'Central Harlem', 'Harlem-East': 'Central Harlem', 'Harlem-West': 'Central Harlem',
+    'Harlem-Upper': 'Central Harlem',
+    
+    # East Harlem
+    'Harlem-East (East Harlem)': 'East Harlem',
+    
+    # Bushwick and Williamsburg
+    'Bushwick': 'Bushwick and Williamsburg', 'Williamsburg-South': 'Bushwick and Williamsburg',
+    'Williamsburg-Central': 'Bushwick and Williamsburg', 'Williamsburg-East': 'Bushwick and Williamsburg',
+    'Williamsburg-North': 'Bushwick and Williamsburg',
+    
+    # Central Bronx
+    'Fordham': 'Central Bronx', 'Kingsbridge Hts/Univ Hts': 'Central Bronx', 'Bedford Park/Norwood': 'Central Bronx',
+    'Bronx Park and Fordham': 'Central Bronx',
+    
+    # Northeast Bronx
+    'Baychester': 'Northeast Bronx', 'Co-op City': 'Northeast Bronx', 'Woodlawn': 'Northeast Bronx',
+    
+    # Southwest Brooklyn
+    'Sunset Park': 'Southwest Brooklyn', 'Borough Park': 'Southwest Brooklyn', 'Dyker Heights': 'Southwest Brooklyn',
+    'Bensonhurst': 'Southwest Brooklyn',
+
+    # Mid-Island (Staten Island)
+    'New Brighton': 'Mid-Island', 
+    'West New Brighton': 'Mid-Island', 
+    'Livingston': 'Mid-Island',
+    
+    # Jamaica (Queens)
+    'Jamaica': 'Jamaica', 
+    'Jamaica Hills': 'Jamaica', 
+    'Jamaica Estates': 'Jamaica', 
+    'South Jamaica': 'Jamaica',
+    
+    # Central Brooklyn
+    'Bedford Stuyvesant': 'Central Brooklyn', 
+    'Crown Heights': 'Central Brooklyn', 
+    'Clinton Hill': 'Central Brooklyn', 
+    'Fort Greene': 'Central Brooklyn',
+    
+    # Hunts Point and Mott Haven (Bronx)
+    'Hunts Point': 'Hunts Point and Mott Haven', 
+    'Mott Haven/Port Morris': 'Hunts Point and Mott Haven',
+    
+    # Northwest Brooklyn
+    'Brooklyn Heights': 'Northwest Brooklyn', 
+    'Cobble Hill': 'Northwest Brooklyn', 
+    'Boerum Hill': 'Northwest Brooklyn', 
+    'Downtown-Fulton Ferry': 'Northwest Brooklyn', 
+    'Downtown-Metrotech': 'Northwest Brooklyn'
+
+    
+}
+
+
+df['Neighborhood3'] = df['Neighborhood'].map(neighborhood_mapping)
+
+
+df['Neighborhood3'].fillna('Other', inplace=True)
+```
+
+```{python}
+df = pd.merge(df, df3[['Neighborhood', 'Safety_Index_ZIPCode']], 
+              left_on='Neighborhood3', right_on='Neighborhood', 
+              how='left')
+
+df.rename(columns={'Safety_Index_ZIPCode': 'Safety_Index'}, inplace=True)
+
+df.drop(columns=['Neighborhood_y'], inplace=True, errors='ignore')
+```
+
+
+Let's first take a look at the ten safest and the ten most dangerous neighborhoods in New York City. 
+
+```{python}
+df_sorted = df.sort_values(by='Safety_Index', ascending=False)
+
+top_ten_safest = df_sorted[['Neighborhood3', 'Safety_Index']].drop_duplicates().head(10)
+top_ten_dangerous = df_sorted[['Neighborhood3', 'Safety_Index']].drop_duplicates().tail(10)
+
+print("Top Ten Safest Areas:")
+print(top_ten_safest)
+
+print("\nTop Ten Most Dangerous Areas:")
+print(top_ten_dangerous)
+```
+
+It appears that these areas align with the neighborhoods we identified earlier as having the highest rents. So, the question arises: is there a relationship between safety ratings and rent?
+
+
+Next, by analyzing the relationship between the safety index and rent, we can determine whether the safety of an area has a significant impact on its rental prices. The following graph, which displays the average rent from the most dangerous to the safest areas, shows that while the relationship is not perfectly positive, the rent in safer areas is indeed significantly higher than in more dangerous areas.
+
+```{python}
+neighborhood_avg = df.groupby('Neighborhood3').agg({
+    'Safety_Index': 'mean',
+    'Gross Income per SqFt': 'mean'
+}).reset_index()
+
+neighborhood_sorted = neighborhood_avg.sort_values(by='Safety_Index')
+
+plt.figure(figsize=(14, 8))
+
+plt.bar(neighborhood_sorted['Neighborhood3'], neighborhood_sorted['Gross Income per SqFt'], color='skyblue')
+
+plt.xticks(rotation=90)  
+plt.xlabel('Neighborhood (Ranked by Safety Index)')
+plt.ylabel('Average Gross Income per SqFt')
+plt.title('Neighborhood Ranking by Safety Index vs. Average Gross Income per SqFt')
+plt.tight_layout()  
+
+plt.show()
+```
+
+```{python}
+df['Safety_Index'] = pd.to_numeric(df['Safety_Index'], errors='coerce')
+
+
+grouped_data = df.groupby('Safety_Index')['Gross Income per SqFt'].mean().reset_index()
+
+plt.figure(figsize=(10, 6))
+plt.scatter(grouped_data['Safety_Index'], grouped_data['Gross Income per SqFt'], color='blue', alpha=0.6, edgecolors='w')
+
+plt.title('Average Gross Income per SqFt by Safety Index')
+plt.xlabel('Safety Index')
+plt.ylabel('Average Gross Income per SqFt')
+
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.tight_layout()
+
+
+grouped_data_sorted = grouped_data.sort_values(by='Safety_Index')
+
+plt.figure(figsize=(10, 6))
+plt.plot(grouped_data_sorted['Safety_Index'], grouped_data_sorted['Gross Income per SqFt'], marker='o', linestyle='-', color='green')
+
+plt.title('Average Gross Income per SqFt by Safety Index')
+plt.xlabel('Safety Index')
+plt.ylabel('Average Gross Income per SqFt')
+
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.tight_layout()
+
+plt.figure(figsize=(12, 7))
+bars = plt.bar(grouped_data_sorted['Safety_Index'], grouped_data_sorted['Gross Income per SqFt'], color='lightblue', label='Avg Gross Income per SqFt', alpha=0.6)
+
+sns.kdeplot(df['Safety_Index'], color='red', label='Safety Index Density', bw_adjust=0.5)
+
+
+plt.xlabel('Safety Index')
+plt.ylabel('Average Gross Income per SqFt')
+plt.title('Average Gross Income per SqFt and Safety Index Distribution')
+plt.legend()
+
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+corr_coefficient = grouped_data_sorted['Safety_Index'].corr(grouped_data_sorted['Gross Income per SqFt'])
+print(f"Correlation Coefficient between Safety Index and Average Gross Income per SqFt: {corr_coefficient}")
+```
+
+The correlation coefficient between the safety index and the average total income per square foot is 0.5126238324703974, which falls between 0.5 and 0.7, indicating a moderate positive correlation. This means that as the safety score increases, so does the total income per square foot, but the relationship between the two is not tight. However, for real-world data, a correlation of 0.5 is already considered quite significant.
+
+This finding suggests that safety is a factor that tenants consider when choosing where to live, which in turn affects rental prices. 
+
+## Build the model
+```{python}
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+
+# Assuming df is your DataFrame with the necessary data
+# encoder = OneHotEncoder(drop='first') is used to prevent multicollinearity by dropping the first category in each feature
+encoder = OneHotEncoder(drop='first')
+X = encoder.fit_transform(df[['ElevatorBinary', 'Apartment Size Category']])  # Assuming these are the categorical features
+
+# Adding the numerical feature 'Safety_Index' to the feature set
+# Note: Ensure Safety_Index does not contain NaN values. If it does, fill or remove them before this step.
+safety_index = df[['Safety_Index']].values  # Ensure this is a 2D array for compatibility with hstack
+X = hstack([X, safety_index])  # Combining categorical and numerical features
+
+y = df['Gross Income per SqFt']  # Continuous target variable
+
+# Splitting the dataset into Training and Testing set
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Random Forest Regressor to handle continuous target variable
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)
+
+# Predicting the Test set results
+y_pred = rf_model.predict(X_test)
+
+# Evaluating the model
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+
+print("Mean Squared Error:", mse)
+print("R-squared Score:", r2)
+```
+
+```{python}
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+from scipy.sparse import hstack
+
+
+
+# Preparing the data
+encoder = OneHotEncoder(drop='first')
+X_categorical = encoder.fit_transform(df[['ElevatorBinary', 'Apartment Size Category']])
+safety_index = df[['Safety_Index']].values
+X = hstack([X_categorical, safety_index])  # Combining encoded and numerical features
+y = df['Gross Income per SqFt']
+
+# Splitting the data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Modeling
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)
+y_pred = rf_model.predict(X_test)
+
+# Evaluation
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+print("Mean Squared Error:", mse)
+print("R-squared Score:", r2)
+
+# Plotting
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, y_pred, alpha=0.5)
+plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2)  # Diagonal line for reference
+plt.xlabel('Actual Gross Income per SqFt')
+plt.ylabel('Predicted Gross Income per SqFt')
+plt.title('Actual vs Predicted Gross Income per SqFt')
+plt.savefig('Actual_vs_Predicted_Gross_Income_per_SqFt.png')  
+plt.show()
+```
+
+## Conclusion
